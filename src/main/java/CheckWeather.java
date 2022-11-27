@@ -7,26 +7,28 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
-public class DoItInParallel implements Callable<Void> {
+public class CheckWeather {
+    public static class MyTask implements Runnable {
+        Weather weather;
 
-    private final List<Weather> weathers;
+        public MyTask(Weather weather) {
+            this.weather = weather;
+        }
 
-    public DoItInParallel(List<Weather> weathers) {
-        this.weathers = weathers;
-    }
-
-    @Override
-    public Void call() throws Exception {
-        for (Weather weather : weathers) {
-            //here you can call your services or just use jdbc api to retrieve data from db and do some business logic
+        @Override
+        public void run() {
+            // business logic at here
             Map<String, String> param = new HashMap<>();
-            param.put("key","ee8d601a63484366aaa110050221208");
+            param.put("key",System.getenv("Weather_API_Key"));
             param.put("q",weather.Latitude+","+weather.Longitude);
             param.put("dt",weather.date.toString());
             String jsonStringResult = HttpClientUtil.doGet("http://api.weatherapi.com/v1/history.json",param);
@@ -39,41 +41,47 @@ public class DoItInParallel implements Callable<Void> {
                 JSONObject realHour = (JSONObject) hour.get(weather.time.getHour());
                 JSONObject condition = (JSONObject) realHour.get("condition");
                 weather.condition = condition.get("text").toString();
-                System.out.println(weather.condition);
+                System.out.println(weather.condition+" "+ Thread.currentThread().getName());
             }catch (Exception e){
                 weather.condition = "Null";
             }
         }
-        return null;
     }
 
-    public static void main(String[] args) throws InterruptedException, ExecutionException {
-        final int objectsCount = 4;
-        final int threads = 4;
-        final int objectsPerThread = objectsCount / threads;
+    public static void main(String[] args) {
 
-        //your 75320 objects stored here
-        String filePath = "C:\\Users\\Michael\\Desktop\\Test3.csv";
+        // Fixed thread number
+        ExecutorService service = Executors.newFixedThreadPool(6);
+
+        // Or un fixed thread number
+        // The number of threads will increase with tasks
+        // ExecutorService service = Executors.newCachedThreadPool(10);
+
+        String filePath = "C:\\Users\\Michael\\Desktop\\Road_Crashes_for_five_Years_Victoria.csv";
         List<String[]> lists = ReadCsv.readAllDataAtOnce(filePath);
-        List<Weather> weatherList = new ArrayList<>(4);
+        List<Weather> weatherList = new ArrayList<>();
         for(int i=0; i<lists.size(); i++){
             Weather weather = new Weather();
             weather.Latitude = lists.get(i)[21];
             weather.Longitude = lists.get(i)[20];
-            weather.date = LocalDate.parse(lists.get(i)[68]);
-            weather.time = LocalTime.parse(lists.get(i)[69]);
+            // create a formatter
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy/MM/dd");
+            weather.date = LocalDate.parse(lists.get(i)[6], formatter);
+            weather.time = LocalTime.parse(lists.get(i)[7]);
             weatherList.add(weather);
             System.out.println("Reading line "+i);
         }
-
-        final CompletionService<Void> completionService = new ExecutorCompletionService<>(Executors.newFixedThreadPool(threads));
-
-        for (int from = 0; from < objectsCount; from += objectsPerThread) {
-            completionService.submit(new DoItInParallel(weatherList.subList(from, from += 1)));
+        for (Weather o : weatherList) {
+            service.execute(new CheckWeather.MyTask(o));
         }
 
-        for (int i = 0; i < threads; i++) {
-            completionService.take().get();
+        // shutdown
+        // this will get blocked until all task finish
+        service.shutdown();
+        try {
+            service.awaitTermination(Long.MAX_VALUE, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
         }
 
         try {
